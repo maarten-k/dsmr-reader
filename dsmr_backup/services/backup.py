@@ -2,6 +2,7 @@ import subprocess
 import logging
 import gzip
 import os
+import shutil
 
 from django.utils.translation import ugettext as _
 from django.db import connection
@@ -114,25 +115,22 @@ def create_full(folder):
     else:
         raise NotImplementedError('Unsupported backup backend: {}'.format(connection.vendor))  # pragma: no cover
 
-    backup_process = subprocess.run(
-        command,
-        env={
-            'PGPASSWORD': settings.DATABASES['default']['PASSWORD']
-        },
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )  # pragma: no cover
+    with gzip.open(backup_file, 'wb', compresslevel=6) as log_file, \
+            subprocess.Popen(
+            command,
+            env={
+                'PGPASSWORD': settings.DATABASES['default']['PASSWORD']
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT) as backup_process:  # pragma: no cover
+        shutil.copyfileobj(backup_process.stdout, log_file)
 
-    # Trade off compression level.
-    with gzip.open(backup_file, 'w', compresslevel=6) as gzip_handle:
-        gzip_handle.write(backup_process.stdout)
+        logger.debug(' - Backup exit code: %s', backup_process.returncode)
 
-    logger.debug(' - Backup exit code: %s', backup_process.returncode)
+        if backup_process.returncode != 0:
+            on_backup_failed(process_handle=backup_process)
 
-    if backup_process.returncode != 0:
-        on_backup_failed(process_handle=backup_process)
-
-    logger.info(' - Created and compressed full backup: %s', backup_file)
+        logger.info(' - Created and compressed full backup: %s', backup_file)
 
 
 def create_partial(folder, models_to_backup):  # pragma: no cover
@@ -176,19 +174,16 @@ def create_partial(folder, models_to_backup):  # pragma: no cover
     else:
         raise NotImplementedError('Unsupported backup backend: {}'.format(connection.vendor))
 
-    backup_process = subprocess.run(
-        command,
-        env={
-            'PGPASSWORD': settings.DATABASES['default']['PASSWORD']
-        },
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-
-    # Partials should be as small as possible, so use max compression.
-    with gzip.open(backup_file, 'w', compresslevel=9) as gzip_handle:
-        gzip_handle.write(backup_process.stdout)
-
+    with gzip.open(backup_file, 'wb', compresslevel=9) as log_file, \
+            subprocess.Popen(
+            command,
+            env={
+                'PGPASSWORD': settings.DATABASES['default']['PASSWORD']
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+            )as backup_process:
+        shutil.copyfileobj(backup_process.stdout, log_file)
     logger.debug(' - Backup exit code: %s', backup_process.returncode)
 
     if backup_process.returncode != 0:
